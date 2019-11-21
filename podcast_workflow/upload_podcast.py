@@ -34,13 +34,15 @@ config = configparser.ConfigParser()
 config.read('config.ini')
 
 # file vars
-rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
-html_template_local_file_name = config['DEFAULT']['HTML_TEMPLATE_LOCAL_FILENAME']
-episodes_bucket_name = config['DEFAULT']['EPISODES_BUCKET_NAME']
-website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 eastern = pytz.timezone('US/Eastern')
+episodes_bucket_name = config['DEFAULT']['EPISODES_BUCKET_NAME']
+html_template_local_file_name = config['DEFAULT']['HTML_TEMPLATE_LOCAL_FILENAME']
+index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
+index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
+rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
+rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
 wait_time = 6 # wait time is 10 minutes
+website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
   '''Pushes a new episode's audio file to s3
@@ -62,7 +64,7 @@ def push_new_episode_audio():
   s3_obj_name = ntpath.basename(audio_file)
   with open(audio_file, "rb") as f:
     try:
-      # s3_client.upload_fileobj(f, episodes_bucket_name, f"episodes/{s3_obj_name}", ExtraArgs={'ACL': 'public-read'})
+      s3_client.upload_fileobj(f, episodes_bucket_name, f"episodes/{s3_obj_name}", ExtraArgs={'ACL': 'public-read'})
       logger.debug("Uploaded file successfully.")
       return {
         'audio_url': f"https://{episodes_bucket_name}.s3.amazonaws.com/episodes/{s3_obj_name}",
@@ -123,7 +125,7 @@ def rss_update_for_new_episode(audio_meta):
 
   # push parsed file to s3 with public-read permissions
   with open(rss_local_file_name, "rb") as f:
-    s3_client.upload_fileobj(f, episodes_bucket_name, rss_local_file_name, ExtraArgs={'ACL': 'public-read'}) 
+    s3_client.upload_fileobj(f, episodes_bucket_name, rss_remote_file_name, ExtraArgs={'ACL': 'public-read'}) 
 
   # delete file from local
   if os.path.exists(rss_local_file_name):
@@ -254,22 +256,51 @@ def create_episode_html_page(podcast_info):
     
     # push parsed episode html file to s3 with public-read permissions
     with open(new_episode_filename, "rb") as f:
-      s3_client.upload_fileobj(f, website_bucket_name, new_episode_filename, ExtraArgs={'ACL': 'public-read'}) 
+      s3_client.upload_fileobj(f, website_bucket_name, new_episode_filename, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'}) 
 
   # delete episode html from local
   if os.path.exists(new_episode_filename):
     os.remove(new_episode_filename)
 
-
-def update_website_index_page():
+def update_website_index_page(podcast_info):
   '''Updates the index_html page to include a link to the newly created
   episode page so that it can be shown to viewers of the page.
   New html link has to go to the top of the page.
   '''
+  
+  # download index.html from website-s3-bucket
+  s3.meta.client.download_file(website_bucket_name, index_html_remote_file_name, index_html_local_file_name)
+  with open(index_html_local_file_name) as fp:
+    soup = BeautifulSoup(fp, "html.parser")
+    posts = soup.find("div", "blog-holder")
+    articles = posts.find_all("article")
+    new_article = copy.copy(articles[0])
+    new_article['id'] = f"post-{str(len(articles)+1)}"
+    new_article.find_all("a")[0].string = f"Episode {podcast_info['episode_number']}"
+    new_article.find_all("a")[0]["href"] = podcast_info['file_name']
+    new_article.find("div", "entry-date published").string = podcast_info['release_date']
+    new_article.find_all("a")[1].string = podcast_info['name']
+    new_article.find_all("a")[1]["href"] = podcast_info['file_name']
+    new_article.find_all("a")[2]["href"] = podcast_info['file_name']
+    new_article.find("div", "excerpt").string = podcast_info['description']
+    articles.insert(0,new_article)
 
+    episode_index_html = f"index_{podcast_info['file_name']}"
+    index_html = soup.prettify("utf-8")
+    pdb.set_trace()
+    with open(episode_index_html, "wb") as file:
+      file.write(index_html)
+    
+    # push parsed index html file to s3 with public-read permissions
+    with open(episode_index_html, "rb") as f:
+      s3_client.upload_fileobj(f, website_bucket_name, os.path.basename(index_html_local_file_name), ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'}) 
 
+    shutil.copy(episode_index_html, index_html_local_file_name) # copy episode index to main index
 
-
+    # delete episode html from local
+  if os.path.exists(episode_index_html):
+    os.remove(episode_index_html)
+    
 def socialize_podcast():
   '''All the magic happens here. A newly created podcast is uploaded to S3.
   All the major podcasting platform publish the podcast, then a html page
@@ -278,6 +309,7 @@ def socialize_podcast():
   
   audio_meta = push_new_episode_audio()
   release_date, num_episodes_in_rss = rss_update_for_new_episode(audio_meta)
+  '''
   time.sleep(wait_time)
 
   spotify_episode_info = get_spotify_info()
@@ -288,6 +320,7 @@ def socialize_podcast():
     
     episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
     episode_file_name = f"{episode_file_name}.html"
+    episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
 
     return {
       'name': spotify_episode_info['name'],
@@ -296,10 +329,13 @@ def socialize_podcast():
       'google_podcast_url': google_music_info['url'],
       'apple_podcast_url': apple_episode_info['url'],
       'file_name': episode_file_name,
-      'release_date': release_date
+      'release_date': release_date,
+      'episode_number': episode_number
     }
   
   episode_meta = consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date)
   create_episode_html_page(episode_meta)
+  update_website_index_page(episode_meta)
+  '''
 
 socialize_podcast()
