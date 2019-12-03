@@ -21,6 +21,8 @@ from datetime import timedelta
 from gmusicapi import Mobileclient
 from mutagen.mp3 import MP3
 from operator import itemgetter
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
 from spotipy.oauth2 import SpotifyClientCredentials
 
 # global clients
@@ -242,6 +244,106 @@ def get_itunes_podcast_info(num_episodes_in_rss):
       'podcast_updated': updated
   }
 
+def get_all_podcasts_from_google_music():
+  '''Returns sorted list of all podcast episodes from Google as a list
+  '''
+
+  here = os.path.dirname(os.path.realpath(__file__))
+  oauth_path = os.path.join(here, config['DEFAULT']['OAUTH_FILEPATH'])
+  device_id = config['DEFAULT']['DEVICE_ID']
+  mc = Mobileclient()
+  series_title = "Fourth Official Soccer Podcast"
+  google_music_url = "https://play.google.com/music/m/"
+  
+  # mc.perform_oauth() only needed once (can be avoided by providing an oauth file)  
+  mc.oauth_login(device_id, oauth_path)
+    
+  episodes_list = mc.get_all_podcast_episodes(device_id)  
+  episodes_list = [episode for episode in episodes_list if episode['seriesTitle'] == series_title]
+  episodes_list  = sorted(episodes_list, key=itemgetter('publicationTimestampMillis'))
+  url_list = [f"{google_music_url}{episode['episodeId']}?t={episode['title']}-{episode['seriesTitle']}" for episode in episodes_list]
+  url_list = [url.replace(" ", "_") for url in url_list]
+  episodes_list = [{'name': episode['title'], 'description': episode['description'], \
+    'publication_timestamp_millis': episode['publicationTimestampMillis'], \
+    'url': url} for episode, url in zip(episodes_list, url_list)]
+  
+  return episodes_list
+
+def get_all_podcasts_from_itunes():
+  '''Uses the podcast ID to retrieve information about the iTunes Podcast URL
+  Uses BeautifulSoup4 for parsing
+  '''
+  options = Options()
+  options.headless = True
+  driver = webdriver.Firefox(options=options)
+  url = config['DEFAULT']['APPLE_PODCAST_URL']
+  driver.get(url)
+  login_form = driver.find_element_by_xpath("//button[@class='link']")
+  login_form.click()
+  time.sleep(30)
+  while login_form:
+    try:
+        login_form = driver.find_element_by_xpath("//button[@class='link']")
+        login_form.click()
+        time.sleep(30)
+    except Exception as e:
+        print(f"See More Episodes button no longer available: {e}")
+        login_form = None
+  podcast_class = "ember-view tracks__track tracks__track--podcast"
+  soup = BeautifulSoup(driver.page_source, "html.parser")
+  episodes_list = soup.find_all('li', attrs={'class': podcast_class})
+  itunes_episodes_count = len(episodes_list)
+  episodes_list = [{'name': episode.find('a').text.strip(), 'description': episode.find('p').text.strip(),
+    'publication_timestamp_millis': episode.find('time').text.strip(),
+    'url': episode.find('a', attrs={'class': "link tracks__track__link--block"})['href']} \
+    for episode in episodes_list ]
+  episodes_list  = sorted(episodes_list, key=itemgetter('name'))
+  return episodes_list
+
+def get_all_podcasts_from_spotify():
+  '''Returns all podcasts from spotify.
+  '''
+    
+  client_credentials_manager = SpotifyClientCredentials()
+  sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
+  search_str = "fourth official soccer podcast"
+  media_type = "episode"
+  results_limit = 20
+  results_offset = 0
+  market = "US"
+  result = sp.search(search_str, results_limit, results_offset, media_type, market)
+  episodes_list = result['episodes']['items']
+  while result['episodes']['items']:
+    results_offset = results_offset+results_limit
+    try:
+        logger.info(f"At {results_offset} in Spotify podcast list, getting next {results_limit} podcasts.")
+        result = sp.search(search_str, results_limit, results_offset, media_type, market)
+        episodes_list.extend(result['episodes']['items'])
+    except Exception as e:
+        logger.error(f"No more Spotify podcast items found: {e}")
+
+  episodes_list  = sorted(episodes_list, key=itemgetter('release_date'))
+  episodes_list = [{'name': episode['name'], 'description': episode['description'], \
+    'release_date': episode['release_date'], 'url': episode['external_urls']['spotify'] \
+    } for episode in episodes_list]
+  return episodes_list
+
+
+def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date):
+  episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
+  episode_file_name = f"{episode_file_name}.html"
+  episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
+
+  return {
+    'name': spotify_episode_info['name'],
+    'description': spotify_episode_info['description'],
+    'spotify_url': spotify_episode_info['url'],
+    'google_podcast_url': google_music_info['url'],
+    'apple_podcast_url': apple_episode_info['url'],
+    'file_name': episode_file_name,
+    'release_date': release_date,
+    'episode_number': episode_number
+  }
 
 def create_episode_html_page(podcast_info):
   '''Creates an html page that populates all information 
@@ -309,7 +411,42 @@ def update_website_index_page(podcast_info):
     # delete episode html from local
   #if os.path.exists(episode_index_html):
   #  os.remove(episode_index_html)
-    
+
+
+def bulk_index_update():
+  '''Does a bulk update of index.html by adding all podcasts to the page
+  '''
+  def get_all_release_dates():
+    '''Get all release dates as a list
+    '''
+
+    # download rss file from s3
+    s3.meta.client.download_file(episodes_bucket_name, rss_remote_file_name, rss_local_file_name)
+    release_date_list = []
+    tree = ET.parse(rss_local_file_name)
+    root = tree.getroot()
+    for item in reversed(root):
+      for idx, child in enumerate(item):
+        if idx == 2:
+          release_date_list.append(child.text)
+    return release_date_list
+  
+  release_date_list = get_all_release_dates()
+  google_episodes = get_all_podcasts_from_google_music()
+  itunes_episodes = get_all_podcasts_from_itunes()
+  spotify_episodes = get_all_podcasts_from_spotify()
+
+  if len(google_episodes) == len(itunes_episodes) and len(google_episodes) == len(spotify_episodes):
+    print(f"Proceed, All episodes list have matching lengths of {len(google_episodes)}")
+    episode_meta_list = [consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date) \
+      for spotify_episode_info, google_music_info, apple_episode_info, release_date in zip(spotify_episodes, \
+        google_episodes, itunes_episodes, release_date_list)]
+    for episode_meta in episode_meta_list:
+      create_episode_html_page(episode_meta)
+      update_website_index_page(episode_meta)
+  else:
+    print(f"Don't proceed, episode list lengths do not match")
+
 def socialize_podcast():
   '''All the magic happens here. A newly created podcast is uploaded to S3.
   All the major podcasting platform publish the podcast, then a html page
@@ -346,5 +483,4 @@ def socialize_podcast():
   create_episode_html_page(episode_meta)
   update_website_index_page(episode_meta)
 
-
-socialize_podcast()
+bulk_index_update()
