@@ -336,7 +336,7 @@ def consolidate_episode_info(spotify_episode_info, google_music_info, apple_epis
 
   return {
     'name': spotify_episode_info['name'],
-    'description': spotify_episode_info['description'],
+    'description': spotify_episode_info['description'].strip(),
     'spotify_url': spotify_episode_info['url'],
     'google_podcast_url': google_music_info['url'],
     'apple_podcast_url': apple_episode_info['url'],
@@ -374,6 +374,56 @@ def create_episode_html_page(podcast_info):
   if os.path.exists(new_episode_filename):
     os.remove(new_episode_filename)
 
+def bulk_update_website_index_page(podcast_info, idx, created_pages_list_length, posts, new_article):
+  '''Updates the index_html page to include a link to the newly created
+  episode page so that it can be shown to viewers of the page.
+  New html link has to go to the top of the page.
+  '''
+  print(f"Bulk index update on episode {idx+1}")
+
+  def populate_new_article(posts, article, podcast_info, idx):
+    new_article = copy.copy(article)
+    new_article['id'] = f"post-{idx+1}"
+    new_article.find_all("a")[0].string = f"Episode {podcast_info['episode_number']}"
+    new_article.find_all("a")[0]["href"] = podcast_info['file_name']
+    new_article.find("div", "entry-date published").string = podcast_info['release_date']
+    new_article.find_all("a")[1].string = podcast_info['name']
+    new_article.find_all("a")[1]["href"] = podcast_info['file_name']
+    excerpt_a = new_article.find_all("a")[2]
+    excerpt_a["href"] = podcast_info['file_name']
+    new_article.find("div", "excerpt").string = podcast_info['description']
+    new_article.find("div", "excerpt").insert(1, excerpt_a)
+    posts.insert(0, new_article)
+    return posts, new_article
+
+  # download index.html from website-s3-bucket
+  if idx == 0:
+    s3.meta.client.download_file(website_bucket_name, index_html_remote_file_name, index_html_local_file_name)
+  
+    with open(index_html_local_file_name) as fp:
+      soup = BeautifulSoup(fp, "html.parser")
+      posts = soup.find("div", "blog-holder")
+      articles = posts.find_all("article")
+      new_article = copy.copy(articles[0])
+      posts, new_article = populate_new_article(posts, new_article, podcast_info, idx)
+      return posts, new_article
+  elif idx < created_pages_list_length-1:
+    posts, new_article = populate_new_article(posts, new_article, podcast_info, idx)
+    return posts, new_article
+  else:
+    posts, new_article = populate_new_article(posts, new_article, podcast_info, idx)
+    with open(index_html_local_file_name) as fp:
+      soup = BeautifulSoup(fp, "html.parser")
+      soup.find("div", "blog-holder").replace_with(posts)
+
+    with open(index_html_local_file_name, "wb") as file:
+      file.write(soup.prettify("utf-8"))
+
+    # push parsed index html file to s3 with public-read permissions
+    with open(index_html_local_file_name, "rb") as f:
+      s3_client.upload_fileobj(f, website_bucket_name, index_html_remote_file_name, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'}) 
+    return posts, new_article
+
 def update_website_index_page(podcast_info):
   '''Updates the index_html page to include a link to the newly created
   episode page so that it can be shown to viewers of the page.
@@ -394,9 +444,11 @@ def update_website_index_page(podcast_info):
     new_article.find("div", "entry-date published").string = podcast_info['release_date']
     new_article.find_all("a")[1].string = podcast_info['name']
     new_article.find_all("a")[1]["href"] = podcast_info['file_name']
-    new_article.find_all("a")[2]["href"] = podcast_info['file_name']
+    excerpt_a = new_article.find_all("a")[2]
+    excerpt_a["href"] = podcast_info['file_name']
     new_article.find("div", "excerpt").string = podcast_info['description']
-    posts.article.insert(0, new_article)
+    new_article.find("div", "excerpt").insert(1, excerpt_a)
+    posts.insert(0, new_article)
     
     #episode_index_html = f"index_{podcast_info['file_name']}"
     with open(index_html_local_file_name, "wb") as file:
@@ -425,7 +477,8 @@ def bulk_index_update():
     release_date_list = []
     tree = ET.parse(rss_local_file_name)
     root = tree.getroot()
-    for item in reversed(root):
+    channel_element = root[0]
+    for item in channel_element.findall('item'):
       for idx, child in enumerate(item):
         if idx == 2:
           release_date_list.append(child.text)
@@ -435,15 +488,23 @@ def bulk_index_update():
   google_episodes = get_all_podcasts_from_google_music()
   itunes_episodes = get_all_podcasts_from_itunes()
   spotify_episodes = get_all_podcasts_from_spotify()
+  created_pages_list = []
 
   if len(google_episodes) == len(itunes_episodes) and len(google_episodes) == len(spotify_episodes):
-    print(f"Proceed, All episodes list have matching lengths of {len(google_episodes)}")
+    print(f"Proceed. All episodes list have matching lengths of {len(google_episodes)}")
     episode_meta_list = [consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date) \
       for spotify_episode_info, google_music_info, apple_episode_info, release_date in zip(spotify_episodes, \
         google_episodes, itunes_episodes, release_date_list)]
-    for episode_meta in episode_meta_list:
+    for idx, episode_meta in enumerate(episode_meta_list):
       create_episode_html_page(episode_meta)
-      update_website_index_page(episode_meta)
+      created_pages_list.append(idx)
+    print(f"Number of episode pages created: {len(created_pages_list)}")
+
+    posts = []
+    new_article = None
+    for created_page, idx in enumerate(created_pages_list):
+      posts, new_article = bulk_update_website_index_page(episode_meta_list[idx], idx, len(created_pages_list), posts, new_article)
+      #bulk_update_website_index_page(episode_meta_list[idx], idx, len(created_pages_list))
   else:
     print(f"Don't proceed, episode list lengths do not match")
 
@@ -469,8 +530,8 @@ def socialize_podcast():
     episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
 
     return {
-      'name': spotify_episode_info['name'],
-      'description': spotify_episode_info['description'],
+      'name': spotify_episode_info['name'].strip(),
+      'description': spotify_episode_info['description'].strip(),
       'spotify_url': spotify_episode_info['url'],
       'google_podcast_url': google_music_info['url'],
       'apple_podcast_url': apple_episode_info['url'],
