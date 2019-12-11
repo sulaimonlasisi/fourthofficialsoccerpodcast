@@ -43,7 +43,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 6 # wait time is 10 minutes
+wait_time = 1800 # wait time is 10 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
@@ -66,7 +66,7 @@ def push_new_episode_audio():
   s3_obj_name = ntpath.basename(audio_file)
   with open(audio_file, "rb") as f:
     try:
-      #s3_client.upload_fileobj(f, episodes_bucket_name, f"episodes/{s3_obj_name}", ExtraArgs={'ACL': 'public-read'})
+      s3_client.upload_fileobj(f, episodes_bucket_name, f"episodes/{s3_obj_name}", ExtraArgs={'ACL': 'public-read'})
       logger.debug("Uploaded file successfully.")
       return {
         'audio_url': f"https://{episodes_bucket_name}.s3.amazonaws.com/episodes/{s3_obj_name}",
@@ -127,7 +127,7 @@ def rss_update_for_new_episode(audio_meta):
 
   # push parsed file to s3 with public-read permissions
   with open(rss_local_file_name, "rb") as f:
-    s3_client.upload_fileobj(f, episodes_bucket_name, rss_local_file_name, ExtraArgs={'ACL': 'public-read'}) 
+    s3_client.upload_fileobj(f, episodes_bucket_name, rss_remote_file_name, ExtraArgs={'ACL': 'public-read'})
 
   # delete file from local
   if os.path.exists(rss_local_file_name):
@@ -254,11 +254,11 @@ def get_all_podcasts_from_google_music():
   mc = Mobileclient()
   series_title = "Fourth Official Soccer Podcast"
   google_music_url = "https://play.google.com/music/m/"
-  
-  # mc.perform_oauth() only needed once (can be avoided by providing an oauth file)  
+
+  # mc.perform_oauth() only needed once (can be avoided by providing an oauth file)
   mc.oauth_login(device_id, oauth_path)
-    
-  episodes_list = mc.get_all_podcast_episodes(device_id)  
+
+  episodes_list = mc.get_all_podcast_episodes(device_id)
   episodes_list = [episode for episode in episodes_list if episode['seriesTitle'] == series_title]
   episodes_list  = sorted(episodes_list, key=itemgetter('publicationTimestampMillis'))
   url_list = [f"{google_music_url}{episode['episodeId']}?t={episode['title']}-{episode['seriesTitle']}" for episode in episodes_list]
@@ -266,7 +266,7 @@ def get_all_podcasts_from_google_music():
   episodes_list = [{'name': episode['title'], 'description': episode['description'], \
     'publication_timestamp_millis': episode['publicationTimestampMillis'], \
     'url': url} for episode, url in zip(episodes_list, url_list)]
-  
+
   return episodes_list
 
 def get_all_podcasts_from_itunes():
@@ -300,10 +300,11 @@ def get_all_podcasts_from_itunes():
   episodes_list  = sorted(episodes_list, key=itemgetter('name'))
   return episodes_list
 
+
 def get_all_podcasts_from_spotify():
   '''Returns all podcasts from spotify.
   '''
-    
+
   client_credentials_manager = SpotifyClientCredentials()
   sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
   search_str = "fourth official soccer podcast"
@@ -344,6 +345,7 @@ def consolidate_episode_info(spotify_episode_info, google_music_info, apple_epis
     'release_date': release_date,
     'episode_number': episode_number
   }
+
 
 def create_episode_html_page(podcast_info):
   '''Creates an html page that populates all information 
@@ -399,7 +401,7 @@ def bulk_update_website_index_page(podcast_info, idx, created_pages_list_length,
   # download index.html from website-s3-bucket
   if idx == 0:
     s3.meta.client.download_file(website_bucket_name, index_html_remote_file_name, index_html_local_file_name)
-  
+
     with open(index_html_local_file_name) as fp:
       soup = BeautifulSoup(fp, "html.parser")
       posts = soup.find("div", "blog-holder")
@@ -421,7 +423,7 @@ def bulk_update_website_index_page(podcast_info, idx, created_pages_list_length,
 
     # push parsed index html file to s3 with public-read permissions
     with open(index_html_local_file_name, "rb") as f:
-      s3_client.upload_fileobj(f, website_bucket_name, index_html_remote_file_name, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'}) 
+      s3_client.upload_fileobj(f, website_bucket_name, index_html_remote_file_name, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'})
     return posts, new_article
 
 def update_website_index_page(podcast_info):
@@ -432,7 +434,7 @@ def update_website_index_page(podcast_info):
   
   # download index.html from website-s3-bucket
   s3.meta.client.download_file(website_bucket_name, index_html_remote_file_name, index_html_local_file_name)
-  
+
   with open(index_html_local_file_name) as fp:
     soup = BeautifulSoup(fp, "html.parser")
     posts = soup.find("div", "blog-holder")
@@ -449,20 +451,13 @@ def update_website_index_page(podcast_info):
     new_article.find("div", "excerpt").string = podcast_info['description']
     new_article.find("div", "excerpt").insert(1, excerpt_a)
     posts.insert(0, new_article)
-    
-    #episode_index_html = f"index_{podcast_info['file_name']}"
+
     with open(index_html_local_file_name, "wb") as file:
       file.write(soup.prettify("utf-8"))
     
     # push parsed index html file to s3 with public-read permissions
     with open(index_html_local_file_name, "rb") as f:
-      s3_client.upload_fileobj(f, website_bucket_name, index_html_remote_file_name, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'}) 
-
-    #shutil.copy(episode_index_html, index_html_local_file_name) # copy episode index to main index
-
-    # delete episode html from local
-  #if os.path.exists(episode_index_html):
-  #  os.remove(episode_index_html)
+      s3_client.upload_fileobj(f, website_bucket_name, index_html_remote_file_name, ExtraArgs={'ACL': 'public-read', 'ContentType': 'text/html'})
 
 
 def bulk_index_update():
@@ -483,7 +478,7 @@ def bulk_index_update():
         if idx == 2:
           release_date_list.append(child.text)
     return release_date_list
-  
+
   release_date_list = get_all_release_dates()
   google_episodes = get_all_podcasts_from_google_music()
   itunes_episodes = get_all_podcasts_from_itunes()
@@ -504,7 +499,6 @@ def bulk_index_update():
     new_article = None
     for created_page, idx in enumerate(created_pages_list):
       posts, new_article = bulk_update_website_index_page(episode_meta_list[idx], idx, len(created_pages_list), posts, new_article)
-      #bulk_update_website_index_page(episode_meta_list[idx], idx, len(created_pages_list))
   else:
     print(f"Don't proceed, episode list lengths do not match")
 
@@ -516,32 +510,17 @@ def socialize_podcast():
   
   audio_meta = push_new_episode_audio()
   release_date, num_episodes_in_rss = rss_update_for_new_episode(audio_meta)
-  
-  
+
   time.sleep(wait_time)
+  print(f"Sleeping for {wait_time} secs to allow episode to publish - manually refresh Apple feed immediately")
 
   spotify_episode_info = get_spotify_info()
-  google_music_info = get_google_music_info()
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
-  
-  def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date):
-    episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
-    episode_file_name = f"{episode_file_name}.html"
-    episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
+  google_music_info = get_google_music_info()
 
-    return {
-      'name': spotify_episode_info['name'].strip(),
-      'description': spotify_episode_info['description'].strip(),
-      'spotify_url': spotify_episode_info['url'],
-      'google_podcast_url': google_music_info['url'],
-      'apple_podcast_url': apple_episode_info['url'],
-      'file_name': episode_file_name,
-      'release_date': release_date,
-      'episode_number': episode_number
-    }
-  
   episode_meta = consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date)
   create_episode_html_page(episode_meta)
   update_website_index_page(episode_meta)
 
-bulk_index_update()
+
+socialize_podcast()
