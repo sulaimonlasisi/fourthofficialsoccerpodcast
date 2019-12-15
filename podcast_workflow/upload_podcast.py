@@ -13,8 +13,11 @@ import requests
 import shutil
 import spotipy
 import time
+import twitter
 import xml.etree.ElementTree as ET
 
+from twitter_utils.shorten_urls import ShortenURL
+from twitter.twitter_utils import calc_expected_status_length
 from bs4 import BeautifulSoup
 from datetime import datetime
 from datetime import timedelta
@@ -502,6 +505,43 @@ def bulk_index_update():
   else:
     print(f"Don't proceed, episode list lengths do not match")
 
+
+def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info):
+  '''Using URLS of respective podcast platforms, post new episode updates
+  Args:
+      urls:   list representing urls from podcast platforms. length = 3
+  Returns:  
+      Twitter status instance representing posted status.
+  '''
+  status = input(f"Enter Podcast Twitter Status update:\n")
+  nl = '\n'
+  urls = f"Apple: {apple_episode_info['url']}{nl}Google: {google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}"
+  status = f"{status}{nl}{urls}"
+
+  twitter_consumer_key = config['DEFAULT']['TWITTER_CONSUMER_KEY']
+  twitter_consumer_secret = config['DEFAULT']['TWITTER_CONSUMER_SECRET']
+  twitter_access_token_key = config['DEFAULT']['TWITTER_ACCESS_TOKEN_KEY']
+  twitter_access_token_secret = config['DEFAULT']['TWITTER_ACCESS_TOKEN_SECRET']
+  api = twitter.Api(twitter_consumer_key, twitter_consumer_secret, 
+    twitter_access_token_key, twitter_access_token_secret)
+
+  def post_status_with_shortened_url(status, api):
+    
+    shortener = ShortenURL()
+
+    # Find all URLs contained within the status message. Value of ``urls`` will
+    # be a list.
+    URL_REGEXP = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\), ]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'''
+    urls = re.findall(URL_REGEXP, status)
+
+    for url in urls:
+      status = status.replace(url, shortener.Shorten(url), 1)
+
+    api.PostUpdates(status, continuation="\u2026")
+
+  post_status_with_shortened_url(status, api)
+
+
 def socialize_podcast():
   '''All the magic happens here. A newly created podcast is uploaded to S3.
   All the major podcasting platform publish the podcast, then a html page
@@ -518,9 +558,11 @@ def socialize_podcast():
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
   google_music_info = get_google_music_info()
 
+  # post episode update to twitter
+  post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info)
+
   episode_meta = consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date)
   create_episode_html_page(episode_meta)
   update_website_index_page(episode_meta)
-
 
 socialize_podcast()
