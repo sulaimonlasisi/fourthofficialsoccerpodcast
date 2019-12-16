@@ -333,7 +333,7 @@ def get_all_podcasts_from_spotify():
   return episodes_list
 
 
-def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date):
+def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date, twitter_status_link=None):
   episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
   episode_file_name = f"{episode_file_name}.html"
   episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
@@ -346,7 +346,8 @@ def consolidate_episode_info(spotify_episode_info, google_music_info, apple_epis
     'apple_podcast_url': apple_episode_info['url'],
     'file_name': episode_file_name,
     'release_date': release_date,
-    'episode_number': episode_number
+    'episode_number': episode_number,
+    'twitter_status_url': twitter_status_link
   }
 
 
@@ -366,6 +367,7 @@ def create_episode_html_page(podcast_info):
     podcasts_links_div.find_all(href=re.compile("apple"))[0]["href"] = podcast_info['apple_podcast_url']
     podcasts_links_div.find_all(href=re.compile("google"))[0]["href"] = podcast_info['google_podcast_url']
     podcasts_links_div.find_all(href=re.compile("spotify"))[0]["href"] = podcast_info['spotify_url']
+    podcasts_links_div.find_all(href=re.compile("twitter"))[0]["href"] = podcast_info['twitter_status_url']
 
     episode_html = soup.prettify("utf-8")
     with open(new_episode_filename, "wb") as file:
@@ -537,9 +539,9 @@ def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotif
     for url in urls:
       status = status.replace(url, shortener.Shorten(url), 1)
 
-    api.PostUpdates(status, continuation="\u2026")
+    return api.PostUpdates(status, continuation="\u2026")
 
-  post_status_with_shortened_url(status, api)
+  return post_status_with_shortened_url(status, api)
 
 
 def socialize_podcast():
@@ -547,21 +549,25 @@ def socialize_podcast():
   All the major podcasting platform publish the podcast, then a html page
   is created for the podcast with links to all platforms and it gets added to the website.
   '''
+  twitter_handle = config['DEFAULT']['TWITTER_HANDLE']
   
   audio_meta = push_new_episode_audio()
   release_date, num_episodes_in_rss = rss_update_for_new_episode(audio_meta)
 
   time.sleep(wait_time)
   print(f"Sleeping for {wait_time} secs to allow episode to publish - manually refresh Apple feed immediately")
-
+  
   spotify_episode_info = get_spotify_info()
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
   google_music_info = get_google_music_info()
 
   # post episode update to twitter
-  post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info)
+  tweet_data = post_episode_update_to_twitter(apple_episode_info, \
+    google_music_info, spotify_episode_info)
+  twitter_status_link = f"https://twitter.com/{twitter_handle}/status/{tweet_data[0].id}"
 
-  episode_meta = consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date)
+  episode_meta = consolidate_episode_info(spotify_episode_info, \
+    google_music_info, apple_episode_info, release_date, twitter_status_link)
   create_episode_html_page(episode_meta)
   update_website_index_page(episode_meta)
 
