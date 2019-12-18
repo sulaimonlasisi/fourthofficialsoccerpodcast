@@ -46,7 +46,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 1800 # wait time is 10 minutes
+wait_time = 1800 # wait time is 30 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
@@ -332,10 +332,14 @@ def get_all_podcasts_from_spotify():
     } for episode in episodes_list]
   return episodes_list
 
+def get_episode_filename(spotify_episode_info):
+  episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
+  return f"{episode_file_name}.html"
+  
+
 
 def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date, twitter_status_link=None):
-  episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
-  episode_file_name = f"{episode_file_name}.html"
+  episode_file_name = get_episode_filename(spotify_episode_info)
   episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
 
   return {
@@ -508,7 +512,7 @@ def bulk_index_update():
     print(f"Don't proceed, episode list lengths do not match")
 
 
-def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info):
+def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info, episode_file_name):
   '''Using URLS of respective podcast platforms, post new episode updates
   Args:
       urls:   list representing urls from podcast platforms. length = 3
@@ -516,8 +520,9 @@ def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotif
       Twitter status instance representing posted status.
   '''
   status = input(f"Enter Podcast Twitter Status update:\n")
+  fourth_official_url = f"https://{website_bucket_name}/{episode_file_name}"
   nl = '\n'
-  urls = f"Apple: {apple_episode_info['url']}{nl}Google: {google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}"
+  urls = f"Apple: {apple_episode_info['url']}{nl}Google:{google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}{nl}Fourth Official Website: {fourth_official_url}"
   status = f"{status}{nl}{urls}"
 
   twitter_consumer_key = config['DEFAULT']['TWITTER_CONSUMER_KEY']
@@ -560,10 +565,11 @@ def socialize_podcast():
   spotify_episode_info = get_spotify_info()
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
   google_music_info = get_google_music_info()
+  episode_file_name = get_episode_filename(spotify_episode_info)
 
   # post episode update to twitter
   tweet_data = post_episode_update_to_twitter(apple_episode_info, \
-    google_music_info, spotify_episode_info)
+    google_music_info, spotify_episode_info, episode_file_name)
   twitter_status_link = f"https://twitter.com/{twitter_handle}/status/{tweet_data[0].id}"
 
   episode_meta = consolidate_episode_info(spotify_episode_info, \
