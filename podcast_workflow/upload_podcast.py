@@ -58,7 +58,7 @@ def push_new_episode_audio():
          - audio_url: the s3 URL of the audio
          - s3_obj_name: the name of the audio in s3
   '''
-
+  print("Only use use alphanumeric characters and common symbols in title and description. Don't use quotes or other special characters.")
   audio_file = input(f"Enter exact path of final version of podcast: e.g. C:/file/file.mp3\n")
   
   # get audio duration and size
@@ -559,8 +559,8 @@ def socialize_podcast():
   audio_meta = push_new_episode_audio()
   release_date, num_episodes_in_rss = rss_update_for_new_episode(audio_meta)
 
-  time.sleep(wait_time)
   print(f"Sleeping for {wait_time} secs to allow episode to publish - manually refresh Apple feed immediately")
+  time.sleep(wait_time)
   
   spotify_episode_info = get_spotify_info()
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
