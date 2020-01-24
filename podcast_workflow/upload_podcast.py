@@ -13,8 +13,11 @@ import requests
 import shutil
 import spotipy
 import time
+import twitter
 import xml.etree.ElementTree as ET
 
+from twitter_utils.shorten_urls import ShortenURL
+from twitter.twitter_utils import calc_expected_status_length
 from bs4 import BeautifulSoup
 from datetime import datetime
 from datetime import timedelta
@@ -43,7 +46,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 1800 # wait time is 10 minutes
+wait_time = 1800 # wait time is 30 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
@@ -55,7 +58,7 @@ def push_new_episode_audio():
          - audio_url: the s3 URL of the audio
          - s3_obj_name: the name of the audio in s3
   '''
-
+  print("Only use use alphanumeric characters and common symbols in title and description. Don't use quotes or other special characters.")
   audio_file = input(f"Enter exact path of final version of podcast: e.g. C:/file/file.mp3\n")
   
   # get audio duration and size
@@ -329,10 +332,14 @@ def get_all_podcasts_from_spotify():
     } for episode in episodes_list]
   return episodes_list
 
-
-def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date):
+def get_episode_filename(spotify_episode_info):
   episode_file_name = spotify_episode_info['name'].split(':')[0].lower().replace('.', '_').replace(' ','')
-  episode_file_name = f"{episode_file_name}.html"
+  return f"{episode_file_name}.html"
+  
+
+
+def consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date, twitter_status_link=None):
+  episode_file_name = get_episode_filename(spotify_episode_info)
   episode_number = spotify_episode_info['name'].split(':')[0].split(' ')[1]
 
   return {
@@ -343,7 +350,8 @@ def consolidate_episode_info(spotify_episode_info, google_music_info, apple_epis
     'apple_podcast_url': apple_episode_info['url'],
     'file_name': episode_file_name,
     'release_date': release_date,
-    'episode_number': episode_number
+    'episode_number': episode_number,
+    'twitter_status_url': twitter_status_link
   }
 
 
@@ -363,6 +371,7 @@ def create_episode_html_page(podcast_info):
     podcasts_links_div.find_all(href=re.compile("apple"))[0]["href"] = podcast_info['apple_podcast_url']
     podcasts_links_div.find_all(href=re.compile("google"))[0]["href"] = podcast_info['google_podcast_url']
     podcasts_links_div.find_all(href=re.compile("spotify"))[0]["href"] = podcast_info['spotify_url']
+    podcasts_links_div.find_all(href=re.compile("twitter"))[0]["href"] = podcast_info['twitter_status_url']
 
     episode_html = soup.prettify("utf-8")
     with open(new_episode_filename, "wb") as file:
@@ -502,25 +511,70 @@ def bulk_index_update():
   else:
     print(f"Don't proceed, episode list lengths do not match")
 
+
+def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotify_episode_info, episode_file_name):
+  '''Using URLS of respective podcast platforms, post new episode updates
+  Args:
+      urls:   list representing urls from podcast platforms. length = 3
+  Returns:  
+      Twitter status instance representing posted status.
+  '''
+  status = input(f"Enter Podcast Twitter Status update:\n")
+  fourth_official_url = f"https://{website_bucket_name}/{episode_file_name}"
+  nl = '\n'
+  urls = f"Apple: {apple_episode_info['url']}{nl}Google:{google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}{nl}Fourth Official Website: {fourth_official_url}"
+  status = f"{status}{nl}{urls}"
+
+  twitter_consumer_key = config['DEFAULT']['TWITTER_CONSUMER_KEY']
+  twitter_consumer_secret = config['DEFAULT']['TWITTER_CONSUMER_SECRET']
+  twitter_access_token_key = config['DEFAULT']['TWITTER_ACCESS_TOKEN_KEY']
+  twitter_access_token_secret = config['DEFAULT']['TWITTER_ACCESS_TOKEN_SECRET']
+  api = twitter.Api(twitter_consumer_key, twitter_consumer_secret, 
+    twitter_access_token_key, twitter_access_token_secret)
+
+  def post_status_with_shortened_url(status, api):
+    
+    shortener = ShortenURL()
+
+    # Find all URLs contained within the status message. Value of ``urls`` will
+    # be a list.
+    URL_REGEXP = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\), ]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'''
+    urls = re.findall(URL_REGEXP, status)
+
+    for url in urls:
+      status = status.replace(url, shortener.Shorten(url), 1)
+
+    return api.PostUpdates(status, continuation="\u2026")
+
+  return post_status_with_shortened_url(status, api)
+
+
 def socialize_podcast():
   '''All the magic happens here. A newly created podcast is uploaded to S3.
   All the major podcasting platform publish the podcast, then a html page
   is created for the podcast with links to all platforms and it gets added to the website.
   '''
+  twitter_handle = config['DEFAULT']['TWITTER_HANDLE']
   
   audio_meta = push_new_episode_audio()
   release_date, num_episodes_in_rss = rss_update_for_new_episode(audio_meta)
 
-  time.sleep(wait_time)
   print(f"Sleeping for {wait_time} secs to allow episode to publish - manually refresh Apple feed immediately")
-
+  time.sleep(wait_time)
+  
   spotify_episode_info = get_spotify_info()
   apple_episode_info = get_itunes_podcast_info(num_episodes_in_rss)
   google_music_info = get_google_music_info()
+  episode_file_name = get_episode_filename(spotify_episode_info)
 
-  episode_meta = consolidate_episode_info(spotify_episode_info, google_music_info, apple_episode_info, release_date)
+  # post episode update to twitter
+  tweet_data = post_episode_update_to_twitter(apple_episode_info, \
+    google_music_info, spotify_episode_info, episode_file_name)
+  twitter_status_link = f"https://twitter.com/{twitter_handle}/status/{tweet_data[0].id}"
+
+  episode_meta = consolidate_episode_info(spotify_episode_info, \
+    google_music_info, apple_episode_info, release_date, twitter_status_link)
   create_episode_html_page(episode_meta)
   update_website_index_page(episode_meta)
-
 
 socialize_podcast()

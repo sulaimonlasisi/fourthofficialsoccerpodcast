@@ -248,7 +248,7 @@ var SendMail = function () {
                         error = "Server is currently unavailable!";
                         break;
                     default:
-                        error = "Unespected error, please try again later.";
+                        error = "Unexpected error, please try again later.";
                 }
                 if (error) {
                     alert(error);
