@@ -46,7 +46,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 1800 # wait time is 30 minutes
+wait_time = 1200 # wait time is 20 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
@@ -146,7 +146,9 @@ def get_spotify_info():
   all of which can be used to create the snippet
   about the episode.
   '''
-    
+  os.environ["SPOTIPY_CLIENT_ID"] = config['DEFAULT']['SPOTIPY_CLIENT_ID']
+  os.environ["SPOTIPY_CLIENT_SECRET"] = config['DEFAULT']['SPOTIPY_CLIENT_SECRET']
+  os.environ["SPOTIPY_REDIRECT_URI"] = config['DEFAULT']['SPOTIPY_REDIRECT_URI']
   client_credentials_manager = SpotifyClientCredentials()
   sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
   search_str = "fourth official soccer podcast"
