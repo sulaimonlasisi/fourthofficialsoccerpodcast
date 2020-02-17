@@ -46,7 +46,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 1200 # wait time is 20 minutes
+wait_time = 1800 # wait time is 40 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
@@ -524,7 +524,7 @@ def post_episode_update_to_twitter(apple_episode_info, google_music_info, spotif
   status = input(f"Enter Podcast Twitter Status update:\n")
   fourth_official_url = f"https://{website_bucket_name}/{episode_file_name}"
   nl = '\n'
-  urls = f"Apple: {apple_episode_info['url']}{nl}Google:{google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}{nl}Fourth Official Website: {fourth_official_url}"
+  urls = f"Apple: {apple_episode_info['url']}{nl}Google:{google_music_info['url']}{nl}Spotify: {spotify_episode_info['url']}{nl}Website: {fourth_official_url}"
   status = f"{status}{nl}{urls}"
 
   twitter_consumer_key = config['DEFAULT']['TWITTER_CONSUMER_KEY']
