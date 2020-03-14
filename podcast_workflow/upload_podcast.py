@@ -46,7 +46,7 @@ index_html_local_file_name = config['DEFAULT']['INDEX_HTML_LOCAL_FILENAME']
 index_html_remote_file_name = config['DEFAULT']['INDEX_HTML_REMOTE_FILENAME']
 rss_local_file_name = config['DEFAULT']['RSS_LOCAL_FILENAME']
 rss_remote_file_name = config['DEFAULT']['RSS_REMOTE_FILENAME']
-wait_time = 1800 # wait time is 40 minutes
+wait_time = 1800 # wait time is 30 minutes
 website_bucket_name = config['DEFAULT']['WEBSITE_BUCKET_NAME']
 
 def push_new_episode_audio():
