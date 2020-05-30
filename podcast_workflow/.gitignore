@@ -3,6 +3,6 @@ config.ini
 *.cred
 **/__pycache__/
 **/fourth_official_website/images/sulai_website.jpg
-**/fourth_official_website/images/*.html
+**/fourth_official_website/*.html
 asrOutput.json
 transcribe_audio.py
